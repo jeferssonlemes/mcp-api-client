@@ -9,16 +9,19 @@
     "dev": "node --watch src/index.js"
   },
   "dependencies": {
+    "dotenv": "^16.5.0",
     "express": "^4.19.2",
     "express-rate-limit": "^7.1.5",
-    "express-slow-down": "^2.0.1"
+    "express-slow-down": "^2.0.1",
+    "swagger-jsdoc": "^6.2.8",
+    "swagger-ui-express": "^5.0.1"
   },
   "keywords": [
-    "mcp", 
-    "api", 
-    "client", 
-    "manager", 
-    "multi-session", 
+    "mcp",
+    "api",
+    "client",
+    "manager",
+    "multi-session",
     "model-context-protocol",
     "process-manager",
     "rest-api",
@@ -29,4 +32,4 @@
   ],
   "author": "",
   "license": "MIT"
-} 
+}

@@ -10,14 +10,105 @@ const API_RESPONSE_TIMEOUT_MS = parseInt(process.env.API_RESPONSE_TIMEOUT_MS) ||
 const API_RUN_TIMEOUT_MS = parseInt(process.env.API_RUN_TIMEOUT_MS) || 5000; // 5 seconds default
 
 /**
- * POST /api/start
- * Starts or checks status of an MCP server
- * Body: { 
- *   clientId: string, 
- *   MCPServerName: string,
- *   config: { command: string, args: string[], env?: object }, 
- *   ttlMinutes?: number 
- * }
+ * @swagger
+ * /api/start:
+ *   post:
+ *     summary: Start or check status of an MCP server
+ *     description: Starts a new MCP server or returns existing server info if already running with same config
+ *     tags: [MCP Management]
+ *     security:
+ *       - BearerAuth: []
+ *       - TokenHeader: []
+ *       - TokenQuery: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/StartRequest'
+ *           examples:
+ *             github:
+ *               summary: GitHub MCP Server
+ *               value:
+ *                 clientId: "client-github"
+ *                 MCPServerName: "github"
+ *                 ttlMinutes: 20
+ *                 config:
+ *                   command: "npx"
+ *                   args: ["-y", "@smithery/cli@latest", "run", "@smithery-ai/github", "--key", "YOUR_API_KEY"]
+ *             mysql:
+ *               summary: MySQL MCP Server
+ *               value:
+ *                 clientId: "client-mysql"
+ *                 MCPServerName: "mysql"
+ *                 ttlMinutes: 15
+ *                 config:
+ *                   command: "npx"
+ *                   args: ["-y", "@smithery/cli@latest", "run", "@michael7736/mysql-mcp-server"]
+ *                   env:
+ *                     MYSQL_HOST: "localhost"
+ *                     MYSQL_PORT: "3306"
+ *                     MYSQL_USER: "username"
+ *                     MYSQL_PASS: "password"
+ *                     MYSQL_DB: "database"
+ *     responses:
+ *       200:
+ *         description: Server started successfully or already running
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessResponse'
+ *                 - type: object
+ *                   properties:
+ *                     clientId:
+ *                       type: string
+ *                       example: "client-github"
+ *                     MCPServerName:
+ *                       type: string
+ *                       example: "github"
+ *                     uniqueKey:
+ *                       type: string
+ *                       example: "client-github:github"
+ *                     status:
+ *                       type: string
+ *                       enum: [started, already-running]
+ *                     pid:
+ *                       type: integer
+ *                       example: 12345
+ *                     user:
+ *                       type: string
+ *                       example: "authenticated-user"
+ *                     authMethod:
+ *                       type: string
+ *                       example: "static-token"
+ *                     message:
+ *                       type: string
+ *                       example: "MCP Server 'github' started successfully"
+ *       400:
+ *         description: Bad request - missing required parameters
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       401:
+ *         description: Authentication required
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/AuthErrorResponse'
+ *       429:
+ *         description: Rate limit exceeded
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/RateLimitResponse'
+ *       500:
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
  */
 router.post('/start', async (req, res) => {
   const { clientId, MCPServerName, config, ttlMinutes = DEFAULT_TTL_MINUTES } = req.body || {};
@@ -75,8 +166,56 @@ router.post('/start', async (req, res) => {
 });
 
 /**
- * GET /api/list?clientId=xxx
- * Lists all MCP servers for a client
+ * @swagger
+ * /api/list:
+ *   get:
+ *     summary: List all MCP servers for a client
+ *     description: Returns a list of all active MCP servers for the specified client
+ *     tags: [MCP Management]
+ *     security:
+ *       - BearerAuth: []
+ *       - TokenHeader: []
+ *       - TokenQuery: []
+ *     parameters:
+ *       - in: query
+ *         name: clientId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Client identifier
+ *         example: "client-github"
+ *     responses:
+ *       200:
+ *         description: List of MCP servers
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessResponse'
+ *                 - type: object
+ *                   properties:
+ *                     clientId:
+ *                       type: string
+ *                       example: "client-github"
+ *                     totalServers:
+ *                       type: integer
+ *                       example: 2
+ *                     servers:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/MCPServer'
+ *       400:
+ *         description: Bad request - clientId is required
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       401:
+ *         description: Authentication required
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/AuthErrorResponse'
  */
 router.get('/list', (req, res) => {
   const { clientId } = req.query;
@@ -113,8 +252,80 @@ router.get('/list', (req, res) => {
 });
 
 /**
- * GET /api/details?clientId=xxx&MCPServerName=yyy
- * Returns details of specific MCP server
+ * @swagger
+ * /api/details:
+ *   get:
+ *     summary: Get details of specific MCP server
+ *     description: Returns detailed information about a specific MCP server including available tools
+ *     tags: [MCP Information]
+ *     security:
+ *       - BearerAuth: []
+ *       - TokenHeader: []
+ *       - TokenQuery: []
+ *     parameters:
+ *       - in: query
+ *         name: clientId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Client identifier
+ *         example: "client-github"
+ *       - in: query
+ *         name: MCPServerName
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: MCP server name
+ *         example: "github"
+ *     responses:
+ *       200:
+ *         description: MCP server details
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessResponse'
+ *                 - type: object
+ *                   properties:
+ *                     clientId:
+ *                       type: string
+ *                       example: "client-github"
+ *                     MCPServerName:
+ *                       type: string
+ *                       example: "github"
+ *                     uniqueKey:
+ *                       type: string
+ *                       example: "client-github:github"
+ *                     details:
+ *                       type: object
+ *                       properties:
+ *                         rawOutput:
+ *                           type: string
+ *                           description: Raw output from MCP server
+ *                         errorOutput:
+ *                           type: string
+ *                           description: Error output if any
+ *                         parsedResponse:
+ *                           type: object
+ *                           description: Parsed JSON response
+ *       400:
+ *         description: Bad request - missing parameters or server not initialized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       404:
+ *         description: MCP server not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       410:
+ *         description: Process was terminated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
  */
 router.get('/details', async (req, res) => {
   const { clientId, MCPServerName } = req.query;
@@ -228,15 +439,115 @@ router.get('/details', async (req, res) => {
 });
 
 /**
- * POST /api/run
- * Executes a tool/command on specific MCP server
- * Body: { 
- *   clientId: string,
- *   MCPServerName: string,
- *   tool: string,
- *   arguments?: object,
- *   input?: string
- * }
+ * @swagger
+ * /api/run:
+ *   post:
+ *     summary: Execute a tool on MCP server
+ *     description: Executes a specific tool or sends raw input to an MCP server. This endpoint has strict rate limiting (20 requests per 5 minutes).
+ *     tags: [MCP Execution]
+ *     security:
+ *       - BearerAuth: []
+ *       - TokenHeader: []
+ *       - TokenQuery: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/RunRequest'
+ *           examples:
+ *             search_repositories:
+ *               summary: Search GitHub repositories
+ *               value:
+ *                 clientId: "client-github"
+ *                 MCPServerName: "github"
+ *                 tool: "search_repositories"
+ *                 arguments:
+ *                   query: "typescript stars:>1000"
+ *             sql_query:
+ *               summary: Execute SQL query
+ *               value:
+ *                 clientId: "client-mysql"
+ *                 MCPServerName: "mysql"
+ *                 tool: "run_sql_query"
+ *                 arguments:
+ *                   query: "SELECT NOW() as current_time, 1 as test_value"
+ *             raw_input:
+ *               summary: Send raw JSON-RPC input
+ *               value:
+ *                 clientId: "client-github"
+ *                 MCPServerName: "github"
+ *                 input: "{\"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"tools/list\"}"
+ *     responses:
+ *       200:
+ *         description: Tool executed successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessResponse'
+ *                 - type: object
+ *                   properties:
+ *                     clientId:
+ *                       type: string
+ *                       example: "client-github"
+ *                     MCPServerName:
+ *                       type: string
+ *                       example: "github"
+ *                     uniqueKey:
+ *                       type: string
+ *                       example: "client-github:github"
+ *                     tool:
+ *                       type: string
+ *                       example: "search_repositories"
+ *                     user:
+ *                       type: string
+ *                       example: "authenticated-user"
+ *                     authMethod:
+ *                       type: string
+ *                       example: "static-token"
+ *                     result:
+ *                       type: object
+ *                       properties:
+ *                         rawOutput:
+ *                           type: string
+ *                           description: Raw output from MCP server
+ *                         errorOutput:
+ *                           type: string
+ *                           description: Error output if any
+ *                         parsedResponse:
+ *                           type: object
+ *                           description: Parsed JSON response
+ *       400:
+ *         description: Bad request - missing parameters or server not ready
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       404:
+ *         description: MCP server not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       410:
+ *         description: Process was terminated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       429:
+ *         description: Rate limit exceeded (strict limit for execution endpoints)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/RateLimitResponse'
+ *       500:
+ *         description: Internal server error or process terminated during execution
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
  */
 router.post('/run', strictRateLimitMiddleware, async (req, res) => {
   const { clientId, MCPServerName, tool, arguments: toolArgs, input } = req.body || {};
@@ -400,8 +711,84 @@ router.post('/run', strictRateLimitMiddleware, async (req, res) => {
 });
 
 /**
- * GET /api/health?clientId=xxx&MCPServerName=yyy
- * Checks health of a specific MCP server
+ * @swagger
+ * /api/health:
+ *   get:
+ *     summary: Check health of specific MCP server
+ *     description: Performs a comprehensive health check of a specific MCP server
+ *     tags: [MCP Health]
+ *     security:
+ *       - BearerAuth: []
+ *       - TokenHeader: []
+ *       - TokenQuery: []
+ *     parameters:
+ *       - in: query
+ *         name: clientId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Client identifier
+ *         example: "client-github"
+ *       - in: query
+ *         name: MCPServerName
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: MCP server name
+ *         example: "github"
+ *     responses:
+ *       200:
+ *         description: MCP server is healthy
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessResponse'
+ *                 - type: object
+ *                   properties:
+ *                     clientId:
+ *                       type: string
+ *                       example: "client-github"
+ *                     MCPServerName:
+ *                       type: string
+ *                       example: "github"
+ *                     uniqueKey:
+ *                       type: string
+ *                       example: "client-github:github"
+ *                     status:
+ *                       type: string
+ *                       example: "healthy"
+ *                     message:
+ *                       type: string
+ *                       example: "MCP server is operational"
+ *       503:
+ *         description: MCP server is unhealthy
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 ok:
+ *                   type: boolean
+ *                   example: false
+ *                 clientId:
+ *                   type: string
+ *                   example: "client-github"
+ *                 MCPServerName:
+ *                   type: string
+ *                   example: "github"
+ *                 uniqueKey:
+ *                   type: string
+ *                   example: "client-github:github"
+ *                 status:
+ *                   type: string
+ *                   example: "unhealthy"
+ *                 reason:
+ *                   type: string
+ *                   example: "Process not found"
+ *                 suggestion:
+ *                   type: string
+ *                   example: "Execute /start first"
  */
 router.get('/health', (req, res) => {
   const { clientId, MCPServerName } = req.query;
@@ -443,8 +830,33 @@ router.get('/health', (req, res) => {
 });
 
 /**
- * GET /api/status
- * Lists all active MCP processes (for debugging/monitoring)
+ * @swagger
+ * /api/status:
+ *   get:
+ *     summary: List all active MCP processes
+ *     description: Returns a list of all currently active MCP processes across all clients (for monitoring)
+ *     tags: [MCP Management]
+ *     security:
+ *       - BearerAuth: []
+ *       - TokenHeader: []
+ *       - TokenQuery: []
+ *     responses:
+ *       200:
+ *         description: List of all active processes
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessResponse'
+ *                 - type: object
+ *                   properties:
+ *                     activeProcesses:
+ *                       type: integer
+ *                       example: 3
+ *                     processes:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/MCPServer'
  */
 router.get('/status', (req, res) => {
   const processes = mcpManager.listActiveProcesses();
@@ -465,8 +877,56 @@ router.get('/status', (req, res) => {
 });
 
 /**
- * DELETE /api/kill?clientId=xxx&MCPServerName=yyy
- * Forces termination of a specific process
+ * @swagger
+ * /api/kill:
+ *   delete:
+ *     summary: Force termination of specific process
+ *     description: Forces the termination of a specific MCP process (for debugging/cleanup)
+ *     tags: [MCP Management]
+ *     security:
+ *       - BearerAuth: []
+ *       - TokenHeader: []
+ *       - TokenQuery: []
+ *     parameters:
+ *       - in: query
+ *         name: clientId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Client identifier
+ *         example: "client-github"
+ *       - in: query
+ *         name: MCPServerName
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: MCP server name
+ *         example: "github"
+ *     responses:
+ *       200:
+ *         description: Process terminated successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessResponse'
+ *                 - type: object
+ *                   properties:
+ *                     message:
+ *                       type: string
+ *                       example: "Process client-github:github terminated"
+ *                     clientId:
+ *                       type: string
+ *                       example: "client-github"
+ *                     MCPServerName:
+ *                       type: string
+ *                       example: "github"
+ *       404:
+ *         description: Process not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
  */
 router.delete('/kill', (req, res) => {
   const { clientId, MCPServerName } = req.query;

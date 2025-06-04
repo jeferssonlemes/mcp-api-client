@@ -14,9 +14,9 @@ const CSP_POLICY = process.env.CSP_POLICY || "default-src 'self'; script-src 'se
 const ENABLE_DETAILED_ERRORS = process.env.ENABLE_DETAILED_ERRORS === 'true' || process.env.NODE_ENV === 'development';
 
 /**
- * Centralized routing configuration with middleware
+ * Setup all routes for the application
  */
-export function configureRoutes(app) {
+export function setupRoutes(app) {
   // Global middleware
   app.use(express.json({ limit: MAX_JSON_SIZE }));
   app.use(express.urlencoded({ extended: true }));
@@ -141,16 +141,22 @@ export function configureRoutes(app) {
   );
 
   // 404 handler
-  app.use((req, res) => {
+  app.use('*', (req, res) => {
     res.status(404).json({
-      error: 'Route not found',
-      path: req.path,
+      error: 'Endpoint not found',
+      path: req.originalUrl,
       method: req.method,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      available_endpoints: {
+        documentation: '/docs',
+        api_info: '/',
+        health_check: '/health',
+        api_routes: '/api/*'
+      }
     });
   });
 
-  // Global error handler (with configurable detail level)
+  // Global error handler
   app.use((error, req, res, next) => {
     console.error('Global error handler:', error);
     
@@ -166,9 +172,9 @@ export function configureRoutes(app) {
       timestamp: new Date().toISOString()
     };
 
-    // Include stack trace only if detailed errors are enabled
-    if (ENABLE_DETAILED_ERRORS) {
-      errorResponse.stack = error.stack;
+    // Include stack trace only in development
+    if (process.env.NODE_ENV === 'development') {
+      errorResponse.details = error.stack;
     }
 
     res.status(status).json(errorResponse);

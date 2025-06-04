@@ -17,475 +17,247 @@ A robust Node.js service for managing multiple MCP (Model Context Protocol) serv
 - ⚡ **Smart throttling**: Progressive slow-down for burst protection
 - 🔒 **Security headers**: CORS, CSP, HSTS, and other security measures
 
-## Installation
+## 🚀 Quick Start
 
+### 1. Install Dependencies
 ```bash
 npm install
 ```
 
-## Configuration
-
-### Environment Variables
-
-Create a `.env` file based on `env.example`:
-
+### 2. Configure Authentication
 ```bash
+# Copy environment template
 cp env.example .env
-```
 
-**Essential configuration:**
-```env
-# Change this in production!
-AUTH_TOKEN=your-secure-32-character-token-here
-
-# Optional rate limiting configuration
-RATE_LIMIT_MAX=100              # 100 requests per 15 minutes
-SLOW_DOWN_DELAY_AFTER=50        # Start slowing down after 50 requests/minute
-```
-
-### Generate Secure Token
-
-Generate a random 32-character token:
-
-```bash
+# Generate a secure token (32 characters)
 node -e "console.log(Array.from({length:32}, () => 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'[Math.floor(Math.random()*62)]).join(''))"
+
+# Add the token to your .env file
+# AUTH_TOKEN=your-generated-token-here
 ```
 
-Example output: `L3Fv2grFnC1jxmznbPxIGmnDVwRCy6Vs`
-
-## Usage
-
-### Start the server
-
+### 3. Start the Server
 ```bash
 npm start
-# or for development
-npm run dev
 ```
 
-Server will be available at `http://localhost:4000`
+### 4. Access Documentation
+- **Interactive API Documentation**: http://localhost:4000/docs
+- **API Information**: http://localhost:4000/
+- **Health Check**: http://localhost:4000/health
+- **OpenAPI Specification**: http://localhost:4000/docs.json
 
-## Authentication
+## 📚 Interactive Documentation
 
-All API endpoints (except `/health` and `/`) require authentication using a static token. The token can be provided in **3 different ways**:
+The API now includes **Swagger UI** for interactive documentation and testing:
+
+### Features
+- **Try It Out**: Test all endpoints directly from the browser
+- **Authentication Support**: Built-in support for all three auth methods
+- **Request/Response Examples**: Comprehensive examples for all endpoints
+- **Schema Documentation**: Detailed request and response schemas
+- **Rate Limiting Info**: Clear documentation of all rate limits
+
+### Authentication in Swagger UI
+1. Click the **"Authorize"** button in Swagger UI
+2. Choose one of three methods:
+   - **Bearer Token**: Enter your token in the "BearerAuth" field
+   - **Header Token**: Enter your token in the "TokenHeader" field  
+   - **Query Parameter**: Use the "TokenQuery" field
+
+### Available Endpoints
+
+| Method | Endpoint | Description | Rate Limit |
+|--------|----------|-------------|------------|
+| GET | `/docs` | Interactive API documentation | None |
+| GET | `/` | API information and quick start | None |
+| GET | `/health` | Service health check | None |
+| POST | `/api/start` | Start or check MCP server | Standard |
+| GET | `/api/list` | List client's MCP servers | Standard |
+| GET | `/api/details` | Get MCP server details | Standard |
+| POST | `/api/run` | Execute tool on MCP server | **Strict** |
+| GET | `/api/health` | Check specific MCP server health | Standard |
+| GET | `/api/status` | List all active processes | Standard |
+| DELETE | `/api/kill` | Terminate specific process | Standard |
+
+## 🔐 Authentication
+
+All `/api/*` endpoints require authentication using a static token. Three methods supported:
 
 ### Method 1: Authorization Header (Recommended)
-
 ```bash
-curl -H "Authorization: Bearer your-token-here" http://localhost:4000/api/status
+curl -H "Authorization: Bearer YOUR_TOKEN" http://localhost:4000/api/status
 ```
 
 ### Method 2: Custom Header
-
 ```bash
-curl -H "X-Auth-Token: your-token-here" http://localhost:4000/api/status
+curl -H "X-Auth-Token: YOUR_TOKEN" http://localhost:4000/api/status
 ```
 
 ### Method 3: Query Parameter
-
 ```bash
-curl "http://localhost:4000/api/status?token=your-token-here"
+curl "http://localhost:4000/api/status?token=YOUR_TOKEN"
 ```
 
-## Rate Limiting
+## 🚦 Rate Limiting
 
-The API implements multiple layers of protection:
+### Standard Endpoints
+- **Limit**: 100 requests per 15 minutes
+- **Slow Down**: After 50 requests per minute
+- **Applies to**: Most API endpoints
 
-- **Standard rate limit**: 100 requests per 15 minutes per IP/user
-- **Slow down**: Adds delay after 50 requests per minute
-- **Strict limiting**: 20 requests per 5 minutes for `/api/run` endpoint
-- **Auth rate limit**: 10 authentication attempts per minute
+### Strict Endpoints (`/api/run`)
+- **Limit**: 20 requests per 5 minutes
+- **Purpose**: Prevent abuse of tool execution
+- **Recommendation**: Use sparingly for actual tool execution
 
-Rate limit headers are included in responses:
-```
-RateLimit-Limit: 100
-RateLimit-Remaining: 95  
-RateLimit-Reset: 1640995200
-```
+### Authentication Endpoints
+- **Limit**: 10 requests per minute
+- **Purpose**: Prevent brute force attacks
 
-## API Endpoints
+## 📖 API Examples
 
-### 1. POST /api/start
-Starts or checks the status of an MCP server with automatic initialization.
-
-**Authentication**: Required
-
-**Body**:
-```json
-{
-  "clientId": "client-github",
-  "MCPServerName": "github", 
-  "ttlMinutes": 15,
-  "config": {
-    "command": "npx",
-    "args": [
-      "-y",
-      "@smithery/cli@latest", 
-      "run",
-      "@smithery-ai/github",
-      "--key", "YOUR_API_KEY_HERE",
-      "--profile", "YOUR_PROFILE_HERE"
-    ]
-  }
-}
-```
-
-**Response**:
-```json
-{
-  "ok": true,
-  "clientId": "client-github",
-  "MCPServerName": "github",
-  "uniqueKey": "client-github:github",
-  "status": "started",
-  "pid": 12345,
-  "user": "authenticated-user",
-  "authMethod": "static-token",
-  "message": "MCP Server 'github' started successfully. MCP initialization in progress..."
-}
-```
-
-### 2. GET /api/health?clientId=xxx&MCPServerName=yyy
-Performs comprehensive health check of an MCP server.
-
-**Authentication**: Required
-
-**Response (Healthy)**:
-```json
-{
-  "ok": true,
-  "clientId": "client-github",
-  "MCPServerName": "github",
-  "uniqueKey": "client-github:github",
-  "status": "healthy",
-  "message": "MCP server is operational"
-}
-```
-
-### 3. GET /api/details?clientId=xxx&MCPServerName=yyy
-Returns MCP server information (available tools, etc.).
-
-**Authentication**: Required
-
-### 4. POST /api/run
-Executes a tool on the MCP server.
-
-**Authentication**: Required  
-**Rate Limit**: Strict (20 requests per 5 minutes)
-
-**Body (option 1 - specific tool)**:
-```json
-{
-  "clientId": "client-github",
-  "MCPServerName": "github",
-  "tool": "search_repositories",
-  "arguments": {
-    "query": "typescript stars:>1000"
-  }
-}
-```
-
-### 5. GET /api/list?clientId=xxx
-Lists all MCP servers for a specific client.
-
-**Authentication**: Required
-
-### 6. GET /api/status
-Lists all active MCP processes (for monitoring).
-
-**Authentication**: Required
-
-### 7. DELETE /api/kill?clientId=xxx&MCPServerName=yyy
-Forces termination of a specific process (for debugging).
-
-**Authentication**: Required
-
-### 8. GET /health (Public)
-Health check endpoint - no authentication required.
-
-### 9. GET / (Public)
-API documentation endpoint - no authentication required.
-
-## Error Handling
-
-### HTTP Status Codes
-
-- **400 Bad Request**: Missing parameters or invalid input
-- **401 Unauthorized**: Authentication required or invalid token
-- **404 Not Found**: MCP server not found
-- **410 Gone**: Process was killed
-- **413 Payload Too Large**: Request body too large (>10MB)
-- **429 Too Many Requests**: Rate limit exceeded
-- **503 Service Unavailable**: Server unhealthy
-- **500 Internal Server Error**: Execution errors
-
-### Authentication Errors
-
-**No authentication provided**:
-```json
-{
-  "error": "Authentication required",
-  "message": "Provide a valid authentication token",
-  "methods": {
-    "header1": "Authorization: Bearer <your-token>",
-    "header2": "X-Auth-Token: <your-token>",
-    "query": "?token=<your-token>"
-  },
-  "timestamp": "2024-01-15T10:30:00.000Z"
-}
-```
-
-**Invalid token**:
-```json
-{
-  "error": "Invalid authentication token",
-  "timestamp": "2024-01-15T10:30:00.000Z"
-}
-```
-
-**Rate limit exceeded**:
-```json
-{
-  "error": "Too many requests",
-  "message": "Rate limit exceeded. Please try again later.",
-  "limit": 100,
-  "windowMs": 900000,
-  "retryAfter": 123,
-  "timestamp": "2024-01-15T10:30:00.000Z"
-}
-```
-
-## Usage Examples with Authentication
-
-### 1. Start GitHub MCP Server
-
+### Start a GitHub MCP Server
 ```bash
 curl -X POST http://localhost:4000/api/start \
+  -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer L3Fv2grFnC1jxmznbPxIGmnDVwRCy6Vs" \
   -d '{
     "clientId": "client-github",
     "MCPServerName": "github",
     "ttlMinutes": 20,
     "config": {
       "command": "npx",
-      "args": [
-        "-y", "@smithery/cli@latest", "run", "@smithery-ai/github",
-        "--key", "YOUR_API_KEY",
-        "--profile", "YOUR_PROFILE"
-      ]
+      "args": ["-y", "@smithery/cli@latest", "run", "@smithery-ai/github", "--key", "YOUR_GITHUB_TOKEN"]
     }
   }'
 ```
 
-### 2. Check server health
-
-```bash
-curl -H "Authorization: Bearer L3Fv2grFnC1jxmznbPxIGmnDVwRCy6Vs" \
-  "http://localhost:4000/api/health?clientId=client-github&MCPServerName=github"
-```
-
-### 3. Execute SQL query
-
+### Execute a Tool
 ```bash
 curl -X POST http://localhost:4000/api/run \
+  -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer L3Fv2grFnC1jxmznbPxIGmnDVwRCy6Vs" \
   -d '{
-    "clientId": "client-mysql",
-    "MCPServerName": "mysql",
-    "tool": "run_sql_query",
+    "clientId": "client-github",
+    "MCPServerName": "github",
+    "tool": "search_repositories",
     "arguments": {
-      "query": "SELECT NOW() as current_time, 1 as test_value"
+      "query": "typescript stars:>1000"
     }
   }'
 ```
 
-### 4. Using different authentication methods
+### List Active Servers
+```bash
+curl "http://localhost:4000/api/list?clientId=client-github" \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+## 🛠️ Configuration
+
+Key environment variables (see `env.example` for complete list):
 
 ```bash
-# Method 1: Authorization header
-curl -H "Authorization: Bearer L3Fv2grFnC1jxmznbPxIGmnDVwRCy6Vs" \
-  http://localhost:4000/api/status
+# Authentication (Required)
+AUTH_TOKEN=your-32-character-token
 
-# Method 2: Custom header
-curl -H "X-Auth-Token: L3Fv2grFnC1jxmznbPxIGmnDVwRCy6Vs" \
-  http://localhost:4000/api/status
+# Server
+PORT=4000
+NODE_ENV=development
 
-# Method 3: Query parameter
-curl "http://localhost:4000/api/status?token=L3Fv2grFnC1jxmznbPxIGmnDVwRCy6Vs"
+# Rate Limiting
+RATE_LIMIT_MAX=100
+RATE_LIMIT_WINDOW_MS=900000
+STRICT_RATE_LIMIT_MAX=20
+STRICT_RATE_LIMIT_WINDOW_MS=300000
+
+# CORS
+ALLOWED_ORIGINS=http://localhost:3000,http://localhost:4000
 ```
 
-## Security Features
-
-### Authentication
-- ✅ **Static token authentication**: Simple and effective for POCs
-- ✅ **Multiple methods**: Header and query parameter support
-- ✅ **32-character tokens**: Strong enough for most use cases
-- ✅ **Flexible usage**: 3 different ways to provide the token
-
-### Rate Limiting
-- ✅ **IP-based limiting**: Prevents abuse from single sources
-- ✅ **User-based limiting**: Granular control for authenticated users
-- ✅ **Progressive throttling**: Gradual slowdown before hard limits
-- ✅ **Endpoint-specific limits**: Stricter limits for sensitive operations
-
-### Security Headers
-- ✅ **CORS configuration**: Configurable cross-origin policies
-- ✅ **Content Security Policy**: Prevents XSS attacks
-- ✅ **HSTS headers**: Forces HTTPS in production
-- ✅ **Frame protection**: Prevents clickjacking
-- ✅ **Content type validation**: Prevents MIME sniffing attacks
-
-### Process Security
-- ✅ **Environment isolation**: Secure environment variable handling
-- ✅ **Process monitoring**: Zombie process detection
-- ✅ **Resource limits**: Request size and timeout controls
-- ✅ **Input validation**: Comprehensive parameter validation
-
-## Architecture
+## 🏗️ Architecture
 
 ```
-┌─────────────────┐    ┌──────────────┐    ┌─────────────────┐
-│   Client A      │────│  Auth Layer  │────│ Rate Limiter    │
-│   (Token Auth)  │    │ (Static Token│    │ (IP+User based) │
-└─────────────────┘    └──────────────┘    └─────────────────┘
-                                                    │
-                       ┌──────────────┐    ┌─────────────────┐
-                       │  MCP Manager │────│ MCP Server A    │
-                       │              │    │ (GitHub)        │
-┌─────────────────┐    │              │    └─────────────────┘
-│   Client B      │────│              │    
-│   (Token Auth)  │    │              │    ┌─────────────────┐
-└─────────────────┘    │              │────│ MCP Server B    │
-                       └──────────────┘    │ (MySQL)         │
-                                           └─────────────────┘
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Swagger UI    │    │   Rate Limiting  │    │  Authentication │
+│  Documentation │────│   Middleware     │────│   Middleware    │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+                                │
+                                ▼
+                       ┌──────────────────┐
+                       │   API Routes     │
+                       │  (/api/*)        │
+                       └──────────────────┘
+                                │
+                                ▼
+                       ┌──────────────────┐
+                       │   MCP Manager    │
+                       │ (Process Mgmt)   │
+                       └──────────────────┘
+                                │
+                                ▼
+                       ┌──────────────────┐
+                       │  MCP Servers     │
+                       │ (Child Processes)│
+                       └──────────────────┘
 ```
 
-### Components
+## 🔧 Development
 
-- **Authentication Layer**: Static token validation
-- **Rate Limiting Layer**: Multi-tier protection against abuse
-- **MCP Manager**: Manages MCP process lifecycle and protocol compliance
-- **API Router**: Exposes RESTful endpoints with proper middleware
-- **Process Registry**: Maintains clientId:MCPServerName → process mapping
-- **Health Monitor**: Continuous process health verification
+### Testing with Swagger UI
+1. Start the server: `npm start`
+2. Open http://localhost:4000/docs
+3. Click "Authorize" and enter your token
+4. Test any endpoint using the "Try it out" button
 
-## Development
+### Testing with curl
+```bash
+# Test authentication
+curl -H "Authorization: Bearer YOUR_TOKEN" http://localhost:4000/api/status
 
-### Project Structure
-
-```
-src/
-├── index.js                 # Server bootstrap with auth/rate limiting
-├── api.js                   # REST API routes
-├── mcpManager.js            # MCP process manager
-├── config/
-│   ├── routes.js           # Centralized routing configuration
-│   └── middleware.js       # Middleware configuration
-└── middleware/
-    ├── auth.js             # Static token authentication
-    └── rateLimit.js        # Rate limiting and security
+# Test rate limiting (run multiple times quickly)
+for i in {1..10}; do curl -H "Authorization: Bearer YOUR_TOKEN" http://localhost:4000/api/status; done
 ```
 
-### Security Configuration
+## 📋 Production Checklist
 
-**Development**:
-- Demo token enabled
-- Detailed error messages
-- CORS enabled for localhost
+- [ ] Set `AUTH_TOKEN` to a secure 32-character random string
+- [ ] Configure `ALLOWED_ORIGINS` for your domain
+- [ ] Set `NODE_ENV=production`
+- [ ] Review rate limiting settings
+- [ ] Set up HTTPS/TLS termination
+- [ ] Configure monitoring and logging
+- [ ] Test all endpoints in Swagger UI
 
-**Production**:
-- Change `AUTH_TOKEN` to secure value
-- Configure `ALLOWED_ORIGINS`
-- Enable security headers
-- Set `NODE_ENV=production`
+## 🆘 Troubleshooting
 
-## Changelog
+### Common Issues
 
-### v2.3 - Simplified Authentication & Rate Limiting
-- ✅ **Simplified authentication**: Removed JWT complexity, now uses static tokens
-- ✅ **Multiple auth methods**: Authorization header, custom header, query parameter
-- ✅ **Comprehensive rate limiting**: Multi-tier protection
-- ✅ **Progressive request throttling**: Gradual slowdown
-- ✅ **Centralized routing**: Better middleware configuration
-- ✅ **Enhanced security headers**: CORS, CSP, HSTS
-- ✅ **Environment-based configuration**: All settings configurable via env vars
-- ✅ **POC-ready**: Perfect for prototypes and demos
+**Server won't start**
+- Check if `AUTH_TOKEN` is set in `.env`
+- Verify all dependencies are installed: `npm install`
+- Check port 4000 is available
 
-### v2.2 - Security & Robustness
-- Added comprehensive health checks
-- Process death detection during execution
-- Stdin write protection
-- Zombie process detection
-- New `/health` endpoint
-- Enhanced error handling with specific HTTP codes
+**Authentication errors**
+- Verify token format (32 characters recommended)
+- Check token is correctly set in headers/query
+- Test with Swagger UI authorize button
 
-### v2.1 - MCP Protocol Compliance
-- Automatic MCP initialization in `/start`
-- Proper initialize → initialized → tools flow
-- Environment variable preservation (Windows PATH fix)
-- Separation of concerns (MCPManager vs API)
+**Rate limiting issues**
+- Check current limits in environment variables
+- Use `/health` endpoint to test (no rate limit)
+- Wait for rate limit window to reset
 
-### v2.0 - Multi-Session Support
-- Multiple MCP servers per client
-- Unique identification with clientId:MCPServerName
-- Enhanced process management
-- Cross-platform support
+**Swagger UI not loading**
+- Verify server is running on correct port
+- Check browser console for errors
+- Try accessing `/docs.json` directly
 
-## Production Deployment
+## 📄 License
 
-### Environment Variables Checklist
+MIT License - see LICENSE file for details.
 
-```env
-# ✅ Required for production
-AUTH_TOKEN=your-secure-32-character-token-here
-NODE_ENV=production
+---
 
-# ✅ Recommended for production
-ALLOWED_ORIGINS=https://yourdomain.com,https://app.yourdomain.com
-TRUSTED_IPS=10.0.0.1,192.168.1.100
-RATE_LIMIT_MAX=50                # Lower for production
-```
-
-### Security Checklist
-
-- [ ] Generate secure `AUTH_TOKEN` (32 characters)
-- [ ] Configure `ALLOWED_ORIGINS` for CORS
-- [ ] Set up `TRUSTED_IPS` if using IP whitelist
-- [ ] Enable HTTPS with reverse proxy
-- [ ] Configure proper security headers
-- [ ] Set up monitoring and alerting
-- [ ] Regular security updates
-
-### Quick Setup for Production
-
-1. **Generate secure token**:
-   ```bash
-   node -e "console.log(Array.from({length:32}, () => 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'[Math.floor(Math.random()*62)]).join(''))"
-   ```
-
-2. **Create .env file**:
-   ```env
-   AUTH_TOKEN=YourGeneratedTokenHere123456789
-   NODE_ENV=production
-   ALLOWED_ORIGINS=https://yourdomain.com
-   ```
-
-3. **Start server**:
-   ```bash
-   npm start
-   ```
-
-## Roadmap
-
-- [ ] ~~Simple authentication~~ ✅ **Completed in v2.3**
-- [ ] ~~Rate limiting per client~~ ✅ **Completed in v2.3**
-- [ ] Redis persistence for clusters
-- [ ] Prometheus metrics
-- [ ] WebSocket streaming for long responses
-- [ ] Web monitoring interface
-- [ ] Docker containerization
-- [ ] Kubernetes deployment manifests
-- [ ] OAuth2/OIDC integration (if needed)
-- [ ] API usage analytics 
+**Need help?** Check the interactive documentation at http://localhost:4000/docs or review the examples above. 
