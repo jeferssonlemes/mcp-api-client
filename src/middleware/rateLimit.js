@@ -63,7 +63,10 @@ export const rateLimitMiddleware = rateLimit({
 export const slowDownMiddleware = slowDown({
   windowMs: SLOW_DOWN_WINDOW_MS,
   delayAfter: SLOW_DOWN_DELAY_AFTER,
-  delayMs: SLOW_DOWN_DELAY_MS,
+  delayMs: (used, req) => {
+    const delayAfter = req.slowDown.limit;
+    return (used - delayAfter) * SLOW_DOWN_DELAY_MS;
+  },
   maxDelayMs: SLOW_DOWN_MAX_DELAY_MS,
   keyGenerator: (req) => {
     const baseKey = req.ip || req.connection.remoteAddress;
@@ -74,8 +77,8 @@ export const slowDownMiddleware = slowDown({
     // Skip slow down for health checks
     return req.path === '/health' || req.path === '/';
   },
-  onLimitReached: (req, res, options) => {
-    console.warn(`[SlowDown] Slow down activated for ${req.ip} on ${req.method} ${req.path}`);
+  validate: {
+    delayMs: false
   }
 });
 
