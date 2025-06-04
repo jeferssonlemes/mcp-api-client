@@ -8,6 +8,7 @@ A robust Node.js service for managing multiple MCP (Model Context Protocol) serv
 - ⏱️ **Automatic timeout**: Inactive processes are terminated automatically  
 - 🔁 **Connection reuse**: Same configuration reuses existing process
 - 📊 **Health monitoring**: Comprehensive health checks and process monitoring
+- 🔄 **Keep-alive pings**: Automatic heartbeat to prevent idle timeouts (Smithery compatible)
 - 🛡️ **Security validations**: Protection against disconnections and zombie processes
 - 🎯 **MCP protocol compliance**: Proper initialize → initialized → tools flow
 - 🔧 **Cross-platform**: Windows (cmd) and Unix support
@@ -172,35 +173,103 @@ RATE_LIMIT_WINDOW_MS=900000
 STRICT_RATE_LIMIT_MAX=20
 STRICT_RATE_LIMIT_WINDOW_MS=300000
 
+# Process Management
+DEFAULT_TTL_MINUTES=15           # Default TTL for MCP processes
+SWEEP_INTERVAL_MINUTES=1         # How often to check for expired processes
+PING_INTERVAL_MINUTES=1          # How often to ping MCP servers to keep connections alive
+
 # CORS
 ALLOWED_ORIGINS=http://localhost:3000,http://localhost:4000
 ```
 
+### 🔄 Connection Keep-Alive (Ping/Heartbeat)
+
+The service includes an automatic **ping/heartbeat mechanism** to prevent idle timeouts from MCP servers (especially important for services like Smithery):
+
+- **Automatic Pinging**: Every 1 minute (configurable via `PING_INTERVAL_MINUTES`)
+- **Smart Targeting**: Only pings initialized and active connections
+- **Prevents Spam**: Avoids pinging too frequently (80% of interval minimum)
+- **Logging**: All ping activities are logged for monitoring
+
+This feature is **especially important** for:
+- Smithery MCP servers (have idle timeouts)
+- Long-running connections
+- Production environments with infrequent API calls
+
+The ping system is **enabled by default** and requires no configuration for basic use.
+
 ## 🏗️ Architecture
 
 ```
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   Swagger UI    │    │   Rate Limiting  │    │  Authentication │
-│  Documentation │────│   Middleware     │────│   Middleware    │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
-                                │
-                                ▼
-                       ┌──────────────────┐
-                       │   API Routes     │
-                       │  (/api/*)        │
-                       └──────────────────┘
-                                │
-                                ▼
-                       ┌──────────────────┐
-                       │   MCP Manager    │
-                       │ (Process Mgmt)   │
-                       └──────────────────┘
-                                │
-                                ▼
-                       ┌──────────────────┐
-                       │  MCP Servers     │
-                       │ (Child Processes)│
-                       └──────────────────┘
+┌────────────────────────────────────────────────────────────────────────────────────┐
+│                                    API Layer                                       │
+├─────────────────┬──────────────────┬─────────────────┬─────────────────────────────┤
+│   Swagger UI    │   Rate Limiting  │  Authentication │       API Routes            │
+│  Documentation  │   Middleware     │   Middleware    │      (/api/*)               │
+└─────────────────┴──────────────────┴─────────────────┴─────────────────────────────┘
+                                            │
+                                            ▼
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                                 MCP Manager                                         │
+│  ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────────────────────┐ │
+│  │   Process       │    │   Heartbeat      │    │      Registry                   │ │
+│  │   Registry      │    │   System         │    │   (clientId:serverName)         │ │
+│  │                 │    │   (1min ping)    │    │                                 │ │
+│  └─────────────────┘    └──────────────────┘    └─────────────────────────────────┘ │
+│                                                                                     │
+│  ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────────────────────┐ │
+│  │   Race Condition│    │   TTL Management │    │    Init Tracking                │ │
+│  │   Protection    │    │   (15min default)│    │   (Parallel Safe)               │ │
+│  └─────────────────┘    └──────────────────┘    └─────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+                                            │
+                                            ▼
+┌────────────────────────────────────────────────────────────────────────────────────┐
+│                              Active MCP Processes                                  │
+│                                                                                    │
+│  Client A                    Client B                    Client C                  │
+│  ┌─────────────────┐         ┌─────────────────┐         ┌─────────────────┐       │
+│  │ GitHub Server   │         │ MySQL Server    │         │ File Server     │       │
+│  │ PID: 12345      │         │ PID: 12346      │         │ PID: 12348      │       │
+│  │ Status: ✅Ready │         │ Status: ✅Ready│         │ Status: ✅Ready │       │
+│  │ Last Ping: 30s  │         │ Last Ping: 45s  │         │ Last Ping: 20s  │       │
+│  └─────────────────┘         └─────────────────┘         └─────────────────┘       │
+│                                                                                    │
+│  ┌─────────────────┐         ┌─────────────────┐         ┌─────────────────┐       │
+│  │ Slack Server    │         │ Weather Server  │         │ Calendar Server │       │
+│  │ PID: 12347      │         │ PID: 12349      │         │ PID: 12350      │       │
+│  │ Status: 🔄Init  │        │ Status: ✅ Ready│         │ Status: ✅Ready │       │
+│  │ Last Ping: -    │         │ Last Ping: 15s  │         │ Last Ping: 55s  │       │
+│  └─────────────────┘         └─────────────────┘         └─────────────────┘       │
+│                                                                                    │
+│  Key: client-a:github        Key: client-b:mysql        Key: client-c:files        │
+│       client-a:slack              client-b:weather           client-c:calendar     │
+└────────────────────────────────────────────────────────────────────────────────────┘
+                                            │
+                                            ▼
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                              Process Management                                     │
+│                                                                                     │
+│  ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────────────────────┐ │
+│  │  Auto Cleanup   │    │   Health Checks  │    │      Graceful Shutdown          │ │
+│  │  (TTL Based)    │    │   (PID Monitor)  │    │    (SIGTERM → SIGKILL)          │ │
+│  └─────────────────┘    └──────────────────┘    └─────────────────────────────────┘ │
+│                                                                                     │
+│  ┌─────────────────────────────────────────────────────────────────────────────────┐│
+│  │                           Cross-Platform Support                                |│
+│  │                                                                                 ││
+│  │  Windows: cmd /c npx ...           Unix/Linux: npx ...                          ││
+│  │  Environment: Sanitized            Shell: Disabled (Security)                   ││
+│  └─────────────────────────────────────────────────────────────────────────────────┘│
+└─────────────────────────────────────────────────────────────────────────────────────┘
+
+Features:
+🔄 Concurrent Safe: Multiple clients can start different servers simultaneously
+⚡ Auto-Recovery: Failed processes are detected and can be restarted  
+🔍 Health Monitoring: Real-time status tracking with PID validation
+💓 Keep-Alive: Automatic heartbeat prevents idle disconnections (Smithery compatible)
+🛡️ Race Protection: Unique IDs prevent initialization conflicts
+📊 Smart Registry: Efficient process reuse with configuration hashing
 ```
 
 ## 🔧 Development
@@ -233,6 +302,47 @@ for i in {1..10}; do curl -H "Authorization: Bearer YOUR_TOKEN" http://localhost
 ## 🆘 Troubleshooting
 
 ### Common Issues
+<!-- @import "[TOC]" {cmd="toc" depthFrom=1 depthTo=6 orderedList=false} -->
+
+<!-- code_chunk_output -->
+
+- [MCP API Client v2.3](#mcp-api-client-v23)
+  - [Features](#features)
+  - [🚀 Quick Start](#-quick-start)
+    - [1. Install Dependencies](#1-install-dependencies)
+    - [2. Configure Authentication](#2-configure-authentication)
+    - [3. Start the Server](#3-start-the-server)
+    - [4. Access Documentation](#4-access-documentation)
+  - [📚 Interactive Documentation](#-interactive-documentation)
+    - [Features](#features-1)
+    - [Authentication in Swagger UI](#authentication-in-swagger-ui)
+    - [Available Endpoints](#available-endpoints)
+  - [🔐 Authentication](#-authentication)
+    - [Method 1: Authorization Header (Recommended)](#method-1-authorization-header-recommended)
+    - [Method 2: Custom Header](#method-2-custom-header)
+    - [Method 3: Query Parameter](#method-3-query-parameter)
+  - [🚦 Rate Limiting](#-rate-limiting)
+    - [Standard Endpoints](#standard-endpoints)
+    - [Strict Endpoints (`/api/run`)](#strict-endpoints-apirun)
+    - [Authentication Endpoints](#authentication-endpoints)
+  - [📖 API Examples](#-api-examples)
+    - [Start a GitHub MCP Server](#start-a-github-mcp-server)
+    - [Execute a Tool](#execute-a-tool)
+    - [List Active Servers](#list-active-servers)
+  - [🛠️ Configuration](#️-configuration)
+    - [🔄 Connection Keep-Alive (Ping/Heartbeat)](#-connection-keep-alive-pingheartbeat)
+  - [🏗️ Architecture](#️-architecture)
+  - [🔧 Development](#-development)
+    - [Testing with Swagger UI](#testing-with-swagger-ui)
+    - [Testing with curl](#testing-with-curl)
+  - [📋 Production Checklist](#-production-checklist)
+  - [🆘 Troubleshooting](#-troubleshooting)
+    - [Common Issues](#common-issues)
+  - [📄 License](#-license)
+
+<!-- /code_chunk_output -->
+
+
 
 **Server won't start**
 - Check if `AUTH_TOKEN` is set in `.env`

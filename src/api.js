@@ -870,6 +870,7 @@ router.get('/status', (req, res) => {
       MCPServerName: p.MCPServerName,
       pid: p.pid,
       lastHit: new Date(p.lastHit).toISOString(),
+      lastPing: p.lastPing ? new Date(p.lastPing).toISOString() : null,
       ttlMinutes: Math.round(p.ttlMs / 60_000),
       command: `${p.config.command} ${p.config.args.join(' ')}`
     }))

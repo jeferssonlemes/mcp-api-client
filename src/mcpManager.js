@@ -6,6 +6,8 @@ const DEFAULT_TTL_MS =
   (parseInt(process.env.DEFAULT_TTL_MINUTES) || 15) * 60_000; // Convert minutes to milliseconds
 const SWEEP_INTERVAL_MS =
   (parseInt(process.env.SWEEP_INTERVAL_MINUTES) || 1) * 60_000; // Convert minutes to milliseconds
+const PING_INTERVAL_MS =
+  (parseInt(process.env.PING_INTERVAL_MINUTES) || 1) * 60_000; // Convert minutes to milliseconds
 
 // Constants for process management
 const SIGTERM_TIMEOUT_MS = 8000; // 8 seconds before SIGKILL
@@ -19,7 +21,7 @@ class MCPManager extends EventEmitter {
     // Prevent memory leak warnings for many concurrent processes
     this.setMaxListeners(0);
 
-    // Structure: uniqueKey -> { proc, config, configHash, lastHit, ttlMs, clientId, MCPServerName, isInitialized, initPromise? }
+    // Structure: uniqueKey -> { proc, config, configHash, lastHit, ttlMs, clientId, MCPServerName, isInitialized, initPromise?, lastPing? }
     this.registry = new Map();
 
     // Track in-flight initialization promises to prevent race conditions
@@ -31,10 +33,13 @@ class MCPManager extends EventEmitter {
     // Start timeout sweep
     setInterval(() => this.sweepExpiredProcesses(), SWEEP_INTERVAL_MS);
 
+    // Start ping/heartbeat mechanism
+    setInterval(() => this.pingActiveConnections(), PING_INTERVAL_MS);
+
     console.log(
       `[MCP] Manager initialized with TTL: ${
         DEFAULT_TTL_MS / 60000
-      } minutes, Sweep interval: ${SWEEP_INTERVAL_MS / 60000} minutes`
+      } minutes, Sweep interval: ${SWEEP_INTERVAL_MS / 60000} minutes, Ping interval: ${PING_INTERVAL_MS / 60000} minutes`
     );
   }
 
@@ -194,6 +199,9 @@ class MCPManager extends EventEmitter {
    * @returns {Promise<boolean>} - True if successfully initialized
    */
   async _initializeMCPServer(proc, uniqueKey) {
+    // Generate unique ID for this specific initialization (avoid race conditions)
+    const initId = this.jsonRpcIdCounter++;
+    
     return new Promise((resolve) => {
       let output = "";
       let initialized = false;
@@ -220,13 +228,14 @@ class MCPManager extends EventEmitter {
           output += chunk;
         }
 
-        // Look for initialize response
+        // Look for initialize response with THIS process's specific ID
         const lines = output.split("\n");
         for (const line of lines) {
           if (line.trim().startsWith("{")) {
             try {
               const response = JSON.parse(line.trim());
-              if (response.id === this.currentInitId && response.result) {
+              // Match the specific initId for this initialization
+              if (response.id === initId && response.result) {
                 // Received initialize response, now send initialized
                 const initializedMessage =
                   JSON.stringify({
@@ -238,6 +247,7 @@ class MCPManager extends EventEmitter {
                 initialized = true;
                 cleanup();
 
+                console.log(`[MCP] Server ${uniqueKey} successfully initialized with ID ${initId}`);
                 this.emit("initialized", uniqueKey);
                 setTimeout(() => resolve(true), 100);
                 return;
@@ -271,14 +281,11 @@ class MCPManager extends EventEmitter {
       proc.stdout.on("data", dataListener);
       proc.stderr.on("data", errorListener);
 
-      // Generate unique ID for this initialization
-      this.currentInitId = this.jsonRpcIdCounter++;
-
-      // Send initialize command
+      // Send initialize command with unique ID
       const initializeMessage =
         JSON.stringify({
           jsonrpc: "2.0",
-          id: this.currentInitId,
+          id: initId,
           method: "initialize",
           params: {
             protocolVersion: "2024-11-05",
@@ -295,12 +302,13 @@ class MCPManager extends EventEmitter {
           },
         }) + "\n";
 
+      console.log(`[MCP] Sending initialize command to ${uniqueKey} with ID ${initId}`);
       proc.stdin.write(initializeMessage);
 
       // Timeout for initialization
       const timeoutHandle = setTimeout(() => {
         if (!initialized) {
-          console.error(`[MCP] Initialization timeout for ${uniqueKey}`);
+          console.error(`[MCP] Initialization timeout for ${uniqueKey} (ID: ${initId})`);
           cleanup();
           this.emit("initTimeout", uniqueKey);
           resolve(false);
@@ -322,11 +330,14 @@ class MCPManager extends EventEmitter {
     const configHash = JSON.stringify(config);
     const existing = this.registry.get(uniqueKey);
 
+    console.log(`[MCP] ensureProcess called for ${uniqueKey} (concurrent processes: ${this.initializingProcesses.size})`);
+
     // Check if there's an in-flight initialization for this key
     const inFlightPromise = this.initializingProcesses.get(uniqueKey);
     if (inFlightPromise) {
       console.log(`[MCP] Waiting for in-flight initialization: ${uniqueKey}`);
       const result = await inFlightPromise;
+      console.log(`[MCP] In-flight initialization completed for ${uniqueKey}`);
       return { ...result, wasAlreadyRunning: true };
     }
 
@@ -337,6 +348,7 @@ class MCPManager extends EventEmitter {
       !existing.proc.killed &&
       existing.isInitialized
     ) {
+      console.log(`[MCP] Reusing existing initialized process for ${uniqueKey}`);
       existing.lastHit = Date.now();
       return {
         proc: existing.proc,
@@ -349,11 +361,13 @@ class MCPManager extends EventEmitter {
     // If exists but with different config or not initialized, kill previous process
     if (existing && !existing.proc.killed) {
       console.log(
-        `[MCP] Killing previous process for ${uniqueKey} (config changed or not initialized)`
+        `[MCP] Killing previous process for ${uniqueKey} (config changed: ${existing.configHash !== configHash}, initialized: ${existing.isInitialized})`
       );
       this._terminateProcess(existing.proc, uniqueKey);
       this.registry.delete(uniqueKey);
     }
+
+    console.log(`[MCP] Starting new initialization for ${uniqueKey}`);
 
     // Create initialization promise to prevent race conditions
     const initializationPromise = this._doEnsureProcess(
@@ -368,9 +382,11 @@ class MCPManager extends EventEmitter {
 
     try {
       const result = await initializationPromise;
+      console.log(`[MCP] Initialization completed for ${uniqueKey}, success: ${result.initialized}`);
       return result;
     } finally {
       this.initializingProcesses.delete(uniqueKey);
+      console.log(`[MCP] Removed ${uniqueKey} from in-flight list (remaining: ${this.initializingProcesses.size})`);
     }
   }
 
@@ -421,16 +437,20 @@ class MCPManager extends EventEmitter {
       }
     }
 
+    console.log(`[MCP] Spawning process: ${command} ${args.join(' ')}`);
     const proc = spawn(command, args, spawnOptions);
 
     if (!proc.pid) {
+      console.error(`[MCP] Failed to spawn process for ${uniqueKey} - no PID assigned`);
       throw new Error(`Failed to spawn process for ${uniqueKey}`);
     }
+
+    console.log(`[MCP] Process spawned successfully for ${uniqueKey} (PID: ${proc.pid})`);
 
     // Register process handlers
     proc.on("exit", (code, signal) => {
       console.log(
-        `[MCP] Process ${uniqueKey} terminated (code: ${code}, signal: ${signal})`
+        `[MCP] Process ${uniqueKey} terminated (PID: ${proc.pid}, code: ${code}, signal: ${signal})`
       );
       this.registry.delete(uniqueKey);
       this.emit(
@@ -444,7 +464,7 @@ class MCPManager extends EventEmitter {
     });
 
     proc.on("error", (error) => {
-      console.error(`[MCP] Error in process ${uniqueKey}:`, error);
+      console.error(`[MCP] Error in process ${uniqueKey} (PID: ${proc.pid}):`, error);
       this.registry.delete(uniqueKey);
       this.emit("processError", uniqueKey, clientId, MCPServerName, error);
     });
@@ -462,6 +482,7 @@ class MCPManager extends EventEmitter {
     };
 
     this.registry.set(uniqueKey, entry);
+    console.log(`[MCP] Process registered in registry: ${uniqueKey}`);
 
     // Initialize the process
     console.log(`[MCP] Initializing MCP server ${uniqueKey}`);
@@ -473,8 +494,10 @@ class MCPManager extends EventEmitter {
       const currentEntry = this.registry.get(uniqueKey);
       if (currentEntry) {
         currentEntry.isInitialized = true;
-        console.log(`[MCP] Server ${uniqueKey} successfully initialized`);
+        console.log(`[MCP] Server ${uniqueKey} successfully initialized and marked as ready`);
         this.emit("configChanged", uniqueKey, "initialized");
+      } else {
+        console.warn(`[MCP] Entry not found in registry after initialization: ${uniqueKey}`);
       }
     } else {
       console.error(`[MCP] Failed to initialize server ${uniqueKey}`);
@@ -536,6 +559,7 @@ class MCPManager extends EventEmitter {
           uniqueKey,
           pid: entry.proc.pid,
           lastHit: entry.lastHit,
+          lastPing: entry.lastPing || null,
           ttlMs: entry.ttlMs,
           config: this._redactSensitiveConfig(entry.config),
           isInitialized: entry.isInitialized,
@@ -581,6 +605,7 @@ class MCPManager extends EventEmitter {
           MCPServerName: entry.MCPServerName,
           pid: entry.proc.pid,
           lastHit: entry.lastHit,
+          lastPing: entry.lastPing || null,
           ttlMs: entry.ttlMs,
           config: this._redactSensitiveConfig(entry.config),
           isInitialized: entry.isInitialized,
@@ -670,6 +695,41 @@ class MCPManager extends EventEmitter {
   }
 
   /**
+   * Manually pings a specific MCP connection to keep it alive
+   * @param {string} clientId
+   * @param {string} MCPServerName
+   * @returns {Promise<Object>} { success: boolean, error?: string }
+   */
+  async pingConnection(clientId, MCPServerName) {
+    const uniqueKey = this._generateKey(clientId, MCPServerName);
+    const entry = this.registry.get(uniqueKey);
+
+    if (!entry) {
+      return { success: false, error: "Process not found" };
+    }
+
+    if (entry.proc.killed) {
+      return { success: false, error: "Process is killed" };
+    }
+
+    if (!entry.isInitialized) {
+      return { success: false, error: "Process not initialized" };
+    }
+
+    try {
+      const pingSuccess = await this._sendPing(entry.proc, uniqueKey);
+      if (pingSuccess) {
+        entry.lastPing = Date.now();
+        return { success: true };
+      } else {
+        return { success: false, error: "Failed to send ping message" };
+      }
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
    * Returns a deep copy of the current state for debugging
    * @returns {Object}
    */
@@ -689,6 +749,7 @@ class MCPManager extends EventEmitter {
         isInitialized: entry.isInitialized,
         killed: entry.proc.killed,
         lastHit: new Date(entry.lastHit).toISOString(),
+        lastPing: entry.lastPing ? new Date(entry.lastPing).toISOString() : null,
         ttlMs: entry.ttlMs,
         config: this._redactSensitiveConfig(entry.config),
       };
@@ -711,6 +772,105 @@ class MCPManager extends EventEmitter {
     this.initializingProcesses.clear();
 
     console.log("[MCP] MCPManager shutdown complete");
+  }
+
+  /**
+   * Sends a ping to an individual MCP server to keep connection alive
+   * @param {ChildProcess} proc - MCP server process
+   * @param {string} uniqueKey - Unique key for logging
+   * @returns {Promise<boolean>} - True if ping was sent successfully
+   */
+  async _sendPing(proc, uniqueKey) {
+    if (!proc || proc.killed) {
+      return false;
+    }
+
+    try {
+      const pingId = this.jsonRpcIdCounter++;
+      const pingMessage = JSON.stringify({
+        jsonrpc: "2.0",
+        id: pingId,
+        method: "ping",
+        params: {}
+      }) + "\n";
+
+      // Try to write ping message
+      const writeResult = proc.stdin.write(pingMessage);
+      
+      if (writeResult) {
+        console.log(`[MCP] Ping sent to ${uniqueKey} (ID: ${pingId})`);
+        return true;
+      } else {
+        console.warn(`[MCP] Failed to send ping to ${uniqueKey} - stdin buffer full (ID: ${pingId})`);
+        return false;
+      }
+    } catch (error) {
+      console.error(`[MCP] Error sending ping to ${uniqueKey}:`, error.message);
+      return false;
+    }
+  }
+
+  /**
+   * Pings all active and initialized MCP connections to keep them alive
+   * This prevents idle timeouts from servers like Smithery
+   */
+  async pingActiveConnections() {
+    const now = Date.now();
+    let pingedCount = 0;
+    let skippedCount = 0;
+    let errorCount = 0;
+
+    console.log(`[MCP] Starting heartbeat cycle (active connections: ${this.registry.size})`);
+
+    // Create a snapshot of registry to avoid modification during iteration
+    const registrySnapshot = Array.from(this.registry.entries());
+
+    for (const [uniqueKey, entry] of registrySnapshot) {
+      try {
+        // Only ping processes that are:
+        // 1. Not killed
+        // 2. Properly initialized 
+        // 3. Haven't been pinged too recently (avoid spam)
+        if (
+          !entry.proc.killed && 
+          entry.isInitialized && 
+          (!entry.lastPing || (now - entry.lastPing) > (PING_INTERVAL_MS * 0.8))
+        ) {
+          const pingSuccess = await this._sendPing(entry.proc, uniqueKey);
+          if (pingSuccess) {
+            // Update lastPing only if still in registry (process might have been killed)
+            const currentEntry = this.registry.get(uniqueKey);
+            if (currentEntry) {
+              currentEntry.lastPing = now;
+              pingedCount++;
+            }
+          } else {
+            errorCount++;
+          }
+        } else {
+          skippedCount++;
+          
+          // Log why it was skipped for debugging
+          const reasons = [];
+          if (entry.proc.killed) reasons.push("killed");
+          if (!entry.isInitialized) reasons.push("not-initialized");
+          if (entry.lastPing && (now - entry.lastPing) <= (PING_INTERVAL_MS * 0.8)) {
+            reasons.push(`recently-pinged-${Math.round((now - entry.lastPing) / 1000)}s-ago`);
+          }
+          
+          if (reasons.length > 0) {
+            console.log(`[MCP] Skipped ping for ${uniqueKey}: ${reasons.join(', ')}`);
+          }
+        }
+      } catch (error) {
+        console.error(`[MCP] Error during ping for ${uniqueKey}:`, error);
+        errorCount++;
+      }
+    }
+
+    if (pingedCount > 0 || skippedCount > 0 || errorCount > 0) {
+      console.log(`[MCP] Heartbeat completed: pinged ${pingedCount}, skipped ${skippedCount}, errors ${errorCount}`);
+    }
   }
 }
 
