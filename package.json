@@ -1,6 +1,6 @@
 {
   "name": "mcp-api-client",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "Service for managing multiple MCP servers with multi-session support",
   "type": "module",
   "main": "src/index.js",
@@ -9,7 +9,9 @@
     "dev": "node --watch src/index.js"
   },
   "dependencies": {
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "express-rate-limit": "^7.1.5",
+    "express-slow-down": "^2.0.1"
   },
   "keywords": [
     "mcp", 
@@ -20,7 +22,10 @@
     "model-context-protocol",
     "process-manager",
     "rest-api",
-    "nodejs"
+    "nodejs",
+    "authentication",
+    "rate-limiting",
+    "security"
   ],
   "author": "",
   "license": "MIT"

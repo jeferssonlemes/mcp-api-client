@@ -1,8 +1,9 @@
 import { spawn } from 'node:child_process';
 import EventEmitter from 'node:events';
 
-const DEFAULT_TTL_MS = 15 * 60_000; // 15 minutes
-const SWEEP_INTERVAL_MS = 60_000;   // Sweep every 1 minute
+// Environment variable configuration with fallbacks
+const DEFAULT_TTL_MS = (parseInt(process.env.DEFAULT_TTL_MINUTES) || 15) * 60_000; // Convert minutes to milliseconds
+const SWEEP_INTERVAL_MS = (parseInt(process.env.SWEEP_INTERVAL_MINUTES) || 1) * 60_000; // Convert minutes to milliseconds
 
 class MCPManager extends EventEmitter {
   constructor() {
@@ -12,6 +13,8 @@ class MCPManager extends EventEmitter {
     
     // Start timeout sweep
     setInterval(() => this.sweepExpiredProcesses(), SWEEP_INTERVAL_MS);
+    
+    console.log(`[MCP] Manager initialized with TTL: ${DEFAULT_TTL_MS / 60000} minutes, Sweep interval: ${SWEEP_INTERVAL_MS / 60000} minutes`);
   }
 
   /**
@@ -90,7 +93,7 @@ class MCPManager extends EventEmitter {
           },
           clientInfo: {
             name: "mcp-api-client",
-            version: "2.2.0"
+            version: "2.3.0"
           }
         }
       }) + '\n';

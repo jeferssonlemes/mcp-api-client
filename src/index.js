@@ -1,47 +1,15 @@
 import express from 'express';
-import { router } from './api.js';
+import { configureRoutes } from './config/routes.js';
+import { getTokenInfo } from './middleware/auth.js';
 import { mcpManager } from './mcpManager.js';
 
 const app = express();
 
-// Middleware
-app.use('/api', router);
+// Trust proxy for rate limiting (if behind reverse proxy)
+app.set('trust proxy', 1);
 
-// Health route
-app.get('/health', (req, res) => {
-  res.json({ 
-    ok: true, 
-    service: 'mcp-api-client',
-    timestamp: new Date().toISOString()
-  });
-});
-
-// Root route with basic documentation
-app.get('/', (req, res) => {
-  res.json({
-    service: 'MCP API Client',
-    description: 'Service for managing multiple MCP servers with multi-session support',
-    version: '2.2.0',
-    endpoints: {
-      'POST /api/start': 'Start or check status of an MCP server',
-      'GET /api/list?clientId=xxx': 'List all MCP servers for a client',
-      'GET /api/details?clientId=xxx&MCPServerName=yyy': 'Get details of specific MCP server',
-      'POST /api/run': 'Execute tool on specific MCP server',
-      'GET /api/health?clientId=xxx&MCPServerName=yyy': 'Check health of specific MCP server',
-      'GET /api/status': 'List all active processes',
-      'DELETE /api/kill?clientId=xxx&MCPServerName=yyy': 'Terminate specific process'
-    },
-    features: [
-      'Support for multiple MCP servers per client',
-      'Unique identifier: clientId + MCPServerName',
-      'Server listing by client',
-      'MCPServerName field required for identification',
-      'Automatic MCP protocol initialization',
-      'Comprehensive health monitoring',
-      'Cross-platform support (Windows/Unix)'
-    ]
-  });
-});
+// Configure all routes and middleware through centralized configuration
+configureRoutes(app);
 
 // MCP Manager event listeners
 mcpManager.on('timeout', (uniqueKey, clientId, MCPServerName) => {
@@ -82,8 +50,58 @@ process.on('SIGINT', () => {
 const PORT = process.env.PORT || 4000;
 
 app.listen(PORT, () => {
-  console.log(`🚀 MCP API Client v2.2 running on http://localhost:${PORT}`);
+  console.log(`🚀 MCP API Client v2.3 running on http://localhost:${PORT}`);
   console.log(`📚 Documentation at http://localhost:${PORT}`);
   console.log(`💓 Health check at http://localhost:${PORT}/health`);
-  console.log(`✨ MCPServerName field required for server identification!`);
+  console.log(`🔐 All API endpoints are protected with token authentication`);
+  
+  // Display rate limiting configuration
+  const rateLimitMax = process.env.RATE_LIMIT_MAX || 100;
+  const rateLimitWindow = Math.ceil((process.env.RATE_LIMIT_WINDOW_MS || 900000) / 60000);
+  const slowDownAfter = process.env.SLOW_DOWN_DELAY_AFTER || 50;
+  const strictRateMax = process.env.STRICT_RATE_LIMIT_MAX || 20;
+  const strictRateWindow = Math.ceil((process.env.STRICT_RATE_LIMIT_WINDOW_MS || 300000) / 60000);
+  
+  console.log(`🛡️  Rate limiting: ${rateLimitMax} requests per ${rateLimitWindow} minutes`);
+  console.log(`⚡ Slow down: After ${slowDownAfter} requests per minute`);
+  console.log(`🚨 Strict limiting: ${strictRateMax} execution requests per ${strictRateWindow} minutes`);
+  
+  console.log('');
+  console.log('Authentication method:');
+  console.log('  • Token: Authorization: Bearer <your-token>');
+  console.log('  • Token: X-Auth-Token: <your-token>');
+  console.log('  • Token: ?token=<your-token>');
+  
+  // Display token configuration
+  const tokenInfo = getTokenInfo();
+  console.log(`  • Token: ${tokenInfo.configured ? 'configured' : 'using demo token (change in production!)'}`);
+  console.log(`  • Token prefix: ${tokenInfo.tokenPrefix}`);
+  
+  console.log('');
+  console.log('Environment configuration:');
+  console.log(`  • NODE_ENV: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`  • AUTH_TOKEN: ${tokenInfo.configured ? 'configured' : 'using demo token (change in production!)'}`);
+  console.log(`  • DEFAULT_TTL: ${process.env.DEFAULT_TTL_MINUTES || 15} minutes`);
+  console.log(`  • MAX_REQUEST_SIZE: ${process.env.MAX_REQUEST_SIZE || '10mb'}`);
+  console.log(`  • CORS_ENABLED: ${process.env.ENABLE_CORS || 'true'}`);
+  console.log(`  • DETAILED_ERRORS: ${process.env.ENABLE_DETAILED_ERRORS || 'auto (dev mode)'}`);
+  
+  // Warning for production
+  if (process.env.NODE_ENV === 'production') {
+    console.log('');
+    console.log('🔥 PRODUCTION MODE WARNINGS:');
+    if (!process.env.AUTH_TOKEN || process.env.AUTH_TOKEN.includes('demo-token')) {
+      console.log('  ⚠️  WARNING: Using demo AUTH_TOKEN! Change immediately!');
+    }
+    if (tokenInfo.length !== 32) {
+      console.log('  ⚠️  WARNING: AUTH_TOKEN should be exactly 32 characters long!');
+    }
+  }
+  
+  // Helpful setup info
+  if (!tokenInfo.configured || process.env.AUTH_TOKEN.includes('demo-token')) {
+    console.log('');
+    console.log('💡 Setup tip: Generate a secure token with:');
+    console.log('   node -e "console.log(Array.from({length:32}, () => \'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789\'[Math.floor(Math.random()*62)]).join(\'\'))"');
+  }
 }); 

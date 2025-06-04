@@ -1,8 +1,13 @@
 import express from 'express';
 import { mcpManager } from './mcpManager.js';
+import { strictRateLimitMiddleware } from './middleware/rateLimit.js';
 
 export const router = express.Router();
-router.use(express.json());
+
+// Environment variable configuration
+const DEFAULT_TTL_MINUTES = parseInt(process.env.DEFAULT_TTL_MINUTES) || 15;
+const API_RESPONSE_TIMEOUT_MS = parseInt(process.env.API_RESPONSE_TIMEOUT_MS) || 3000; // 3 seconds default
+const API_RUN_TIMEOUT_MS = parseInt(process.env.API_RUN_TIMEOUT_MS) || 5000; // 5 seconds default
 
 /**
  * POST /api/start
@@ -15,7 +20,7 @@ router.use(express.json());
  * }
  */
 router.post('/start', async (req, res) => {
-  const { clientId, MCPServerName, config, ttlMinutes = 15 } = req.body || {};
+  const { clientId, MCPServerName, config, ttlMinutes = DEFAULT_TTL_MINUTES } = req.body || {};
 
   // Parameter validation
   if (!clientId) {
@@ -49,9 +54,16 @@ router.post('/start', async (req, res) => {
       pid: proc.pid,
       message: wasAlreadyRunning 
         ? `MCP Server '${MCPServerName}' is already running and operational for receiving calls`
-        : `MCP Server '${MCPServerName}' started successfully. MCP initialization in progress...`
+        : `MCP Server '${MCPServerName}' started successfully. MCP initialization in progress...`,
+      user: req.user?.id || req.user?.sub,
+      authMethod: req.authMethod,
+      configuration: {
+        ttlMinutes,
+        defaultTTL: DEFAULT_TTL_MINUTES
+      }
     };
 
+    console.log(`[API] ${req.authMethod} user ${req.user?.id || req.user?.sub} started MCP server ${uniqueKey}`);
     res.json(response);
   } catch (error) {
     console.error(`[API] Error starting MCP ${MCPServerName} for ${clientId}:`, error);
@@ -204,7 +216,7 @@ router.get('/details', async (req, res) => {
           parsedResponse: parsedOutput
         }
       });
-    }, 3000);
+    }, API_RESPONSE_TIMEOUT_MS);
 
   } catch (error) {
     console.error(`[API] Error getting details for ${clientId}:${MCPServerName}:`, error);
@@ -226,7 +238,7 @@ router.get('/details', async (req, res) => {
  *   input?: string
  * }
  */
-router.post('/run', async (req, res) => {
+router.post('/run', strictRateLimitMiddleware, async (req, res) => {
   const { clientId, MCPServerName, tool, arguments: toolArgs, input } = req.body || {};
 
   if (!clientId) {
@@ -360,19 +372,23 @@ router.post('/run', async (req, res) => {
         // Ignore parse error
       }
 
+      console.log(`[API] ${req.authMethod} user ${req.user?.id || req.user?.sub} executed tool '${tool || 'custom-input'}' on ${clientId}:${MCPServerName}`);
+
       res.json({
         ok: true,
         clientId,
         MCPServerName,
         uniqueKey: `${clientId}:${MCPServerName}`,
         tool: tool || 'custom-input',
+        user: req.user?.id || req.user?.sub,
+        authMethod: req.authMethod,
         result: {
           rawOutput: output.trim(),
           errorOutput: errorOutput.trim(),
           parsedResponse: parsedOutput
         }
       });
-    }, 5000);
+    }, API_RUN_TIMEOUT_MS);
 
   } catch (error) {
     console.error(`[API] Error executing tool for ${clientId}:${MCPServerName}:`, error);
