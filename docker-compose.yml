@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  # Development service
+  mcp-api-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: mcp-api-dev
+    ports:
+      - "4000:4000"
+    volumes:
+      - .:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+      - PORT=4000
+    env_file:
+      - .env
+    restart: unless-stopped
+    networks:
+      - mcp-network
+    profiles:
+      - dev
+
+  # Production service
+  mcp-api-prod:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: mcp-api-prod
+    ports:
+      - "4000:4000"
+    environment:
+      - NODE_ENV=production
+      - PORT=4000
+    env_file:
+      - .env
+    restart: unless-stopped
+    networks:
+      - mcp-network
+    profiles:
+      - prod
+
+networks:
+  mcp-network:
+    driver: bridge
+
+volumes:
+  node_modules: 
